@@ -1,5 +1,7 @@
 name: sheng kernel
 
+# Build outputs stay in the run artifacts: this workflow never writes to the repository.
+
 # sheng-only pipeline: two passes (bootstrap prelink -> driver archives -> final
 # link) for the Xiaomi Pad 6S Pro port. The generic workflow stays untouched.
 
@@ -66,7 +68,7 @@ on:
         default: false
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: macos-build-${{ github.ref }}
@@ -278,51 +280,6 @@ jobs:
           path: out/*/userdata/**
           if-no-files-found: error
           retention-days: 7
-
-      - name: Publish the kernel
-        if: success()
-        run: |
-          set -eu
-          mkdir -p ci-artifacts
-          cp -f out/sheng/kernel/kernel.macho ci-artifacts/kernel.macho
-          cp -f out/sheng/kernel/kernel.json ci-artifacts/kernel.json
-          shasum -a 256 ci-artifacts/kernel.macho | tee ci-artifacts/kernel.macho.sha256
-          git config user.name 'ci-report'
-          git config user.email 'ci-report@users.noreply.github.com'
-          git checkout -B ci-artifacts
-          git add -f ci-artifacts
-          git commit -q -m "kernel from run ${{ github.run_id }}"
-          git push -f origin ci-artifacts
-
-      - name: Publish the diagnostics
-        if: always()
-        run: |
-          set +e
-          {
-            echo "run ${{ github.run_id }} sha ${{ github.sha }} $(date -u +%FT%TZ)"
-            echo '== logs present =='
-            ls -la out/sheng/logs 2>/dev/null || echo 'no logs directory'
-            echo '== artifacts =='
-            ls -la out/sheng/kernel 2>/dev/null
-            echo '== archives in the device board =='
-            sed -n '/archives = \[/,/\]/p' device/board.toml
-            echo '== defconfigs =='
-            ls device/configs
-            for f in out/sheng/logs/*.log; do
-              [ -f "$f" ] || continue
-              echo "===== $(basename "$f") ====="
-              tail -n 80 "$f"
-            done
-            echo '== unique compiler errors =='
-            grep -hE ' error: ' out/sheng/logs/*.log 2>/dev/null | sed 's#.*/xnu-work/##' | sort -u | head -80
-          } > .ci-report.txt 2>&1
-          wc -c .ci-report.txt
-          git config user.name 'ci-report'
-          git config user.email 'ci-report@users.noreply.github.com'
-          git checkout -B ci-report
-          git add -f .ci-report.txt
-          git commit -q -m "ci report ${{ github.run_id }}"
-          git push -f origin ci-report
 
       - name: Remove proprietary inputs
         if: always()
