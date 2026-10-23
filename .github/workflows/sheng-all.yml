@@ -1,0 +1,349 @@
+name: sheng build
+
+# sheng-only pipeline: two kernel passes (bootstrap prelink -> driver archives -> final
+# link), userdata, payload, then the UEFI firmware volume and the Android boot image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_repository:
+        description: Device repository as owner/name
+        required: true
+        default: UniXNU/UniXNU-sheng
+      device_ref:
+        description: Device repository ref
+        required: true
+        default: main
+      defconfig:
+        description: Defconfig name
+        required: true
+        default: sheng-full_defconfig
+      steps:
+        description: Steps to run
+        type: choice
+        options:
+          - kernel
+          - kernel userdata
+          - kernel payload
+          - kernel userdata payload
+        default: kernel payload
+      ipsw_url:
+        description: IPSW URL (empty uses board.toml)
+        required: false
+        default: ""
+      pre_build:
+        description: Optional shell commands run in the UniXNU checkout before the kernel build
+        required: false
+        default: ""
+      trust_cache_url:
+        description: Trust cache bundle URL (optional)
+        required: false
+        default: ""
+      unique_chip_id:
+        description: Platform seed for the payload (64-bit hex; the secret wins when set)
+        required: false
+        default: "0x1122334455667788"
+      owner_trust_cache:
+        description: Treat the trust cache URL as an owner-signed bundle
+        type: boolean
+        default: false
+      data_seed_url:
+        description: Data seed URL (optional)
+        required: false
+        default: ""
+      grow_gib:
+        description: Grow the Data seed to this many GiB (optional)
+        required: false
+        default: ""
+      skip_setup:
+        description: Mark Setup as done in the Data seed
+        type: boolean
+        default: false
+      upload_userdata:
+        description: Upload the userdata image (large)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sheng-build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  UNIXNU_UEFI: ${{ github.workspace }}/uefi-sheng
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.device_repository || 'UniXNU/UniXNU-sheng' }}
+          ref: ${{ inputs.device_ref || 'main' }}
+          path: device
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - name: Check out the UEFI port
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Report the runner toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version
+          xcode-select -p
+          xcrun --sdk iphoneos --find mig || echo 'mig not found for iphoneos'
+
+      - name: Install host tools
+        run: |
+          brew install cmake ninja unifdef llvm mtools dtc
+          brew install lld || true
+          llddir="$(brew --prefix lld 2>/dev/null || true)/bin"
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          if [ -d "$llddir" ]; then echo "$llddir" >> "$GITHUB_PATH"; fi
+          if ! command -v ld.lld >/dev/null && [ -x "$llddir/ld.lld" ]; then
+            mkdir -p /opt/homebrew/opt/llvm/bin
+            ln -sf "$llddir/ld.lld" /opt/homebrew/opt/llvm/bin/ld.lld
+          fi
+          command -v ld.lld || ls -l /opt/homebrew/opt/llvm/bin/ld.lld || echo 'ld.lld still missing'
+
+      - name: Verify the host tools
+        run: |
+          for tool in git make clang cmake ninja unifdef mtools dtc xcodebuild; do
+            printf '%-10s %s\n' "$tool" "$(command -v "$tool" || echo MISSING)"
+          done
+
+      - name: Prepare the device tree
+        run: python3 .ci/setup_device.py
+
+      - name: Select the device
+        run: |
+          ./unixnu defconfig "${{ inputs.defconfig || 'sheng-full_defconfig' }}" -D "$GITHUB_WORKSPACE/device"
+          ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
+                          corecrypto-2023 IOStorageFamily -D "$GITHUB_WORKSPACE/device"
+
+      - name: Prepare inputs
+        env:
+          TRUST_CACHE_URL: ${{ inputs.trust_cache_url }}
+          DATA_SEED_URL: ${{ inputs.data_seed_url }}
+          GROW_GIB: ${{ inputs.grow_gib }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+        run: |
+          if [ -n "$TRUST_CACHE_URL" ]; then
+            curl -fL "$TRUST_CACHE_URL" -o "$RUNNER_TEMP/trustcache"
+          fi
+          if [ -n "$DATA_SEED_URL" ]; then
+            curl -fL "$DATA_SEED_URL" -o "$RUNNER_TEMP/data.dbr"
+            if [ -n "$GROW_GIB" ]; then
+              python3 scripts/seed-data-grow.py --gib "$GROW_GIB" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
+              mv "$RUNNER_TEMP/data-grow.dbr" "$RUNNER_TEMP/data.dbr"
+            fi
+          elif [ -n "$GROW_GIB" ]; then
+            echo "grow_gib needs data_seed_url" >&2
+            exit 1
+          fi
+          if [ "$SKIP_SETUP" = "true" ] && [ ! -f "$RUNNER_TEMP/data.dbr" ]; then
+            echo "skip_setup needs data_seed_url" >&2
+            exit 1
+          fi
+
+      - name: Run pre-build steps
+        if: inputs.pre_build != ''
+        env:
+          PRE_BUILD: ${{ inputs.pre_build }}
+          DEVICE_DIR: ${{ github.workspace }}/device
+        run: bash -euo pipefail -c "$PRE_BUILD"
+
+      - name: Assemble the tree and seed the Apple caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ./unixnu tree -D "$GITHUB_WORKSPACE/device"
+          dir=out/sheng/tree/.cache/sources
+          mkdir -p "$dir"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/apple-oss-distributions/xnu/contents/iokit/DriverKit?ref=xnu-10063.121.3" \
+            -o "$dir/xnu-driverkit-10063.121.3.json"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/apple-oss-distributions/xnu/contents/iokit/DriverKit/crypto?ref=xnu-10063.121.3" \
+            -o "$dir/xnu-driverkit-crypto-10063.121.3.json"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/apple-oss-distributions/xnu/contents/EXTERNAL_HEADERS/TrustCache?ref=xnu-8796.101.5" \
+            -o "$dir/xnu-trustcache-8796.101.5.json"
+          python3 .ci/patch_bringup.py
+
+      - name: Build kernel
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+          UNIXNU_DRIVERKIT_TAG: xnu-10063.121.3
+          UNIXNU_TRUSTCACHE_TAG: xnu-8796.101.5
+          MAKEFLAGS: "-k"
+          XNU_EXTRA_CFLAGS: "-Wno-unknown-warning-option -Wno-reserved-identifier -Wno-missing-designated-field-initializers -Wno-pre-c11-compat -Wno-suggest-override -Wno-unnecessary-virtual-specifier -Wno-suggest-destructor-override -Wno-ms-bitfield-padding"
+        run: |
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          ./unixnu build kernel "${args[@]}"
+
+      - name: Generate the prelink candidates
+        run: python3 .ci/make_candidates.py
+
+      - name: Switch to the full driver configuration
+        run: |
+          set -eu
+          python3 .ci/setup_device.py --full
+          ./unixnu defconfig sheng-drivers_defconfig -D "$GITHUB_WORKSPACE/device"
+          ./unixnu tree -D "$GITHUB_WORKSPACE/device"
+          python3 .ci/patch_bringup.py
+          mkdir -p out/sheng/tree/.cache/firmware/kernelcache.macho
+          cp -f out/ipsw/*/kernelcache.decompressed \
+                out/sheng/tree/.cache/firmware/kernelcache.macho/kernelcache.release.ipad7.decompressed
+          rm -f out/sheng/kernel/kernel.macho
+          find out/sheng/tree/build/xnu -name 'mach.development.*.unstripped.noctf' -delete
+          echo 'second pass prepared'
+
+      - name: Rebuild with the full driver set
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+          UNIXNU_DRIVERKIT_TAG: xnu-10063.121.3
+          UNIXNU_TRUSTCACHE_TAG: xnu-8796.101.5
+          MAKEFLAGS: "-k"
+          XNU_EXTRA_CFLAGS: "-Wno-unknown-warning-option -Wno-reserved-identifier -Wno-missing-designated-field-initializers -Wno-pre-c11-compat -Wno-suggest-override -Wno-unnecessary-virtual-specifier -Wno-suggest-destructor-override -Wno-ms-bitfield-padding"
+        run: |
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          ./unixnu build kernel "${args[@]}"
+
+      - name: Build userdata
+        if: contains(inputs.steps || 'kernel', 'userdata')
+        env:
+          IPSW_URL: ${{ inputs.ipsw_url }}
+        run: |
+          args=()
+          if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
+          ./unixnu build userdata "${args[@]}"
+
+      - name: Prepare the payload configuration
+        run: |
+          set -eu
+          if [ -f "$RUNNER_TEMP/data.dbr" ]; then
+            echo 'a Data seed is present: the install entry stays'
+            exit 0
+          fi
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          board = Path('device/board.toml')
+          text = board.read_text()
+          stripped = re.sub(r'(?ms)^\[payload\.install\].*?(?=^\[)', '', text)
+          if stripped != text:
+              board.write_text(stripped)
+              print('no Data seed: removed [payload.install]')
+          else:
+              print('[payload.install] already absent')
+          PY
+
+      - name: Build payload
+        if: contains(inputs.steps || 'kernel', 'payload')
+        env:
+          UNIQUE_CHIP_ID: ${{ secrets.UNIXNU_UNIQUE_CHIP_ID || inputs.unique_chip_id }}
+          SKIP_SETUP: ${{ inputs.skip_setup }}
+          OWNER_TRUST_CACHE: ${{ inputs.owner_trust_cache }}
+        run: |
+          args=()
+          if [ -f "$RUNNER_TEMP/trustcache" ]; then
+            if [ "$OWNER_TRUST_CACHE" = "true" ]; then
+              args+=(--owner-trust-cache "$RUNNER_TEMP/trustcache")
+            else
+              args+=(--trust-cache "$RUNNER_TEMP/trustcache")
+            fi
+          fi
+          if [ -f "$RUNNER_TEMP/data.dbr" ]; then args+=(--data-ramdisk "$RUNNER_TEMP/data.dbr"); fi
+          if [ -n "$UNIQUE_CHIP_ID" ]; then args+=(--unique-chip-id "$UNIQUE_CHIP_ID"); fi
+          if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
+          ./unixnu build payload "${args[@]}"
+
+      - name: Build the EFI package
+        run: ./unixnu build package
+
+      - name: Build the UEFI firmware volume
+        run: ./unixnu build firmware --uefi "$GITHUB_WORKSPACE/uefi-sheng"
+
+      - name: Build the Android boot image
+        run: |
+          set -eu
+          dtb=sheng/sheng.dtb
+          ramdisk=out/sheng/payload/payload.img
+          if [ -f "$ramdisk" ]; then r="$ramdisk"; else r=none; fi
+          ./unixnu bootimg --uefi "$GITHUB_WORKSPACE/uefi-sheng" --dtb "$dtb" --ramdisk "$r"
+          ls -l out/sheng/boot/
+
+      - name: Summarise the build result
+        if: always()
+        run: |
+          {
+            echo "### macOS build $( [ "${{ job.status }}" = success ] && echo succeeded || echo failed )"
+            find out -maxdepth 3 -type f \( -name '*.macho' -o -name '*.img' -o -name '*.efi' -o -name '*.fd' \) -printf '%10s  %p\n' 2>/dev/null | sort -k2 || true
+            for f in out/sheng/logs/*.log; do
+              [ -f "$f" ] || continue
+              echo "#### $(basename "$f")"
+              echo '```'
+              tail -n 30 "$f"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload kernel, payload and boot image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-${{ inputs.defconfig || 'sheng-full_defconfig' }}
+          path: |
+            out/*/kernel/**
+            out/*/payload/**
+            out/*/logs/**
+            out/*/tree/build/*/compile.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload boot image and firmware
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-sheng-boot
+          path: |
+            out/sheng/boot/**
+            out/sheng/package/Build/Out/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload userdata
+        if: always() && inputs.upload_userdata && contains(inputs.steps || 'kernel', 'userdata')
+        uses: actions/upload-artifact@v4
+        with:
+          name: unixnu-userdata-${{ inputs.defconfig || 'sheng-full_defconfig' }}
+          path: out/*/userdata/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Remove proprietary inputs
+        if: always()
+        run: |
+          rm -rf out/ipsw out/feeds device/.cache/firmware out/*/tree/.cache/firmware
+          rm -f "$RUNNER_TEMP/trustcache" "$RUNNER_TEMP/data.dbr" "$RUNNER_TEMP/data-grow.dbr"
