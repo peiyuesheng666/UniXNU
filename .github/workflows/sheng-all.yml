@@ -239,6 +239,9 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           ./unixnu build userdata "${args[@]}"
 
+      - name: Fetch the IPSW members the payload needs
+        run: ./unixnu ipsw fetch
+
       - name: Prepare the payload configuration
         run: |
           set -eu
@@ -272,6 +275,24 @@ jobs:
               args+=(--owner-trust-cache "$RUNNER_TEMP/trustcache")
             else
               args+=(--trust-cache "$RUNNER_TEMP/trustcache")
+            fi
+          else
+            # No bundle was supplied: fall back to the restore image's own static trust
+            # cache. --owner-trust-cache skips the [payload] trust_cache_sha256 allow-list,
+            # which pins the maintainer's own composite bundle.
+            tc=""
+            for js in out/ipsw/*/*.trustcache.json; do
+              [ -f "$js" ] || continue
+              if grep -q '"component": "StaticTrustCache"' "$js"; then
+                tc="${js%.json}"
+                break
+              fi
+            done
+            if [ -n "$tc" ]; then
+              echo "using the IPSW static trust cache: $tc ($(stat -c%s "$tc") bytes)"
+              args+=(--owner-trust-cache "$tc")
+            else
+              echo "no trust cache available: the payload will boot to Setup only" >&2
             fi
           fi
           if [ -f "$RUNNER_TEMP/data.dbr" ]; then args+=(--data-ramdisk "$RUNNER_TEMP/data.dbr"); fi
