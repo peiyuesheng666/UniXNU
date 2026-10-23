@@ -298,6 +298,8 @@ jobs:
           ( cd out/sheng/tree && python3 "$GITHUB_WORKSPACE/device/scripts/fetch-sheng-dts.py" )
           # the preflight reads uefi-sheng/Platforms/Xiaomi/shengPkg relative to the tree
           ln -sfn "$GITHUB_WORKSPACE/uefi-sheng" out/sheng/tree/uefi-sheng
+          # the sheng package provides Binaries/<device>/... that the platform dsc pulls in
+          ./unixnu build package
           ./unixnu build firmware --uefi "$UNIXNU_UEFI"
           ./unixnu bootimg --uefi "$UNIXNU_UEFI" --dtb out/sheng/tree/build/sheng/sheng.dtb
           ls -l out/*/boot/
