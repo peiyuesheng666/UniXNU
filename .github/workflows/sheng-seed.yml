@@ -97,6 +97,16 @@ jobs:
           path: uefi-sheng
           token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
 
+      - name: Apply the firmware diagnostics patch
+        run: |
+          set -eu
+          if [ -f .ci/uefi-diag.patch ]; then
+            git -C "$GITHUB_WORKSPACE/uefi-sheng" apply "$GITHUB_WORKSPACE/.ci/uefi-diag.patch" \
+              && echo "diagnostic patch applied"
+          else
+            echo "no diagnostic patch"
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -411,6 +421,21 @@ jobs:
             exit $rc
           fi
           ls -l out/sheng/boot/
+
+      - name: Build the v4 boot image (kernel only)
+        run: |
+          set -eu
+          python3 .ci/v0_to_v4.py out/sheng/boot/boot.img out/sheng/boot/boot-v4.img
+          ls -l out/sheng/boot/
+
+      - name: Upload the v4 boot image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheng-boot-v4
+          path: out/sheng/boot/boot-v4.img
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Summarise the build result
         if: always()
