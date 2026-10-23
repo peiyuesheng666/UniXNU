@@ -356,14 +356,16 @@ jobs:
           if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
           ./unixnu build payload "${args[@]}"
 
-      - name: Place the device tree in the build tree
-        # check-sheng.py (firmware preflight) and bootimg both read build/sheng/sheng.dtb
-        # relative to the assembled tree.
+      - name: Stage the device tree and UEFI checkout for the preflight
+        # check-sheng.py reads build/sheng/sheng.dtb and uefi-sheng/Platforms/... as fixed
+        # paths relative to the assembled tree.
         run: |
           set -eu
           mkdir -p out/sheng/tree/build/sheng
           cp -f "$GITHUB_WORKSPACE/sheng/sheng.dtb" out/sheng/tree/build/sheng/sheng.dtb
+          ln -sfn "$GITHUB_WORKSPACE/uefi-sheng" out/sheng/tree/uefi-sheng
           ls -l out/sheng/tree/build/sheng/sheng.dtb
+          ls -ld out/sheng/tree/uefi-sheng
 
       - name: Build the EFI package
         run: ./unixnu build package
