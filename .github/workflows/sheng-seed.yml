@@ -138,10 +138,11 @@ jobs:
           hdiutil create -size 8g -fs APFS -volname Data -layout NONE -o build/seed.dmg >/dev/null
           mnt="$RUNNER_TEMP/seedmnt"; rm -rf "$mnt"; mkdir -p "$mnt"
           hdiutil attach -nobrowse -owners off -mountpoint "$mnt" -plist build/seed.dmg > "$RUNNER_TEMP/att.plist"
-          dev=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/att.plist'));print(d['system-entities'][0]['dev-entry'])")
+          dev=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/att.plist','rb'));print(d['system-entities'][0]['dev-entry'])")
           diskutil info -plist "$dev" > "$RUNNER_TEMP/vol.plist" || true
-          vol=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/vol.plist'));print(d.get('APFSVolumeUUID') or d.get('VolumeUUID') or '')")
+          vol=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/vol.plist','rb'));print(d.get('APFSVolumeUUID') or d.get('VolumeUUID') or '')")
           echo "seed volume uuid: $vol"
+          test -n "$vol" || { echo "could not read the APFS volume UUID" >&2; exit 1; }
           mkdir -p "$mnt/mobile/Library/Preferences"
           sync
           hdiutil detach "$dev" >/dev/null
