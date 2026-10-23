@@ -385,8 +385,10 @@ jobs:
       - name: Build the Android boot image
         run: |
           set -eu
-          dtb=sheng/sheng.dtb
-          ramdisk=out/sheng/payload/payload.img
+          dtb=build/sheng/sheng.dtb
+          mkdir -p out/sheng/tree/build/sheng
+          cp -f "$GITHUB_WORKSPACE/sheng/sheng.dtb" out/sheng/tree/build/sheng/sheng.dtb
+          ramdisk="$GITHUB_WORKSPACE/out/sheng/payload/payload.img"
           if [ -f "$ramdisk" ]; then r="$ramdisk"; else r=none; fi
           ./unixnu bootimg --uefi "$GITHUB_WORKSPACE/uefi-sheng" --dtb "$dtb" --ramdisk "$r"
           ls -l out/sheng/boot/
