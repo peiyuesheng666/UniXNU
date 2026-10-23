@@ -374,7 +374,12 @@ jobs:
         run: |
           set -eu
           git -C "$GITHUB_WORKSPACE/uefi-sheng" submodule update --init --depth 1 Binaries
-          ls "$GITHUB_WORKSPACE/uefi-sheng/Binaries" | head
+          # Device-Binaries ships no sheng directory; use the closest calama sibling.
+          if [ ! -d "$GITHUB_WORKSPACE/uefi-sheng/Binaries/sheng" ]; then
+            cp -a "$GITHUB_WORKSPACE/uefi-sheng/Binaries/nuwa" "$GITHUB_WORKSPACE/uefi-sheng/Binaries/sheng"
+            echo "seeded Binaries/sheng from nuwa"
+          fi
+          ls "$GITHUB_WORKSPACE/uefi-sheng/Binaries/sheng" | head
           ./unixnu build firmware --uefi "$GITHUB_WORKSPACE/uefi-sheng"
 
       - name: Build the Android boot image
