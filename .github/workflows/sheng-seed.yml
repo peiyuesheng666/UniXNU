@@ -390,7 +390,24 @@ jobs:
           cp -f "$GITHUB_WORKSPACE/sheng/sheng.dtb" out/sheng/tree/build/sheng/sheng.dtb
           ramdisk="$GITHUB_WORKSPACE/out/sheng/payload/payload.img"
           if [ -f "$ramdisk" ]; then r="$ramdisk"; else r=none; fi
-          ./unixnu bootimg --uefi "$GITHUB_WORKSPACE/uefi-sheng" --dtb "$dtb" --ramdisk "$r"
+          set +e
+          ./unixnu bootimg --uefi "$GITHUB_WORKSPACE/uefi-sheng" --dtb "$dtb" --ramdisk "$r" \
+            > bootimg.out 2>&1
+          rc=$?
+          cat bootimg.out
+          if [ $rc -ne 0 ]; then
+            {
+              echo "bootimg rc=$rc"
+              echo "--- bootimg.out"
+              tail -60 bootimg.out
+              echo "--- driver log"
+              tail -60 out/sheng/logs/bootimg.log 2>/dev/null || true
+              echo "--- inputs"
+              ls -l "$dtb" "$r" 2>&1 || true
+              ls -l out/sheng/tree/uefi-sheng/Build/*/*/FV/*.fd 2>&1 || true
+            } > bootimg-error.txt
+            exit $rc
+          fi
           ls -l out/sheng/boot/
 
       - name: Summarise the build result
