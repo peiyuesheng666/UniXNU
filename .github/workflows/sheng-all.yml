@@ -142,7 +142,7 @@ jobs:
         run: |
           ./unixnu defconfig "${{ inputs.defconfig || 'sheng-full_defconfig' }}" -D "$GITHUB_WORKSPACE/device"
           ./unixnu fetch xnu libplatform libdispatch AvailabilityVersions libpthread \
-                          corecrypto-2023 IOStorageFamily -D "$GITHUB_WORKSPACE/device"
+                          corecrypto-2023 IOStorageFamily edk2 -D "$GITHUB_WORKSPACE/device"
 
       - name: Prepare inputs
         env:
@@ -287,6 +287,14 @@ jobs:
           if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
           ./unixnu build payload "${args[@]}"
 
+      - name: Build the firmware volume and the boot image
+        run: |
+          set -eu
+          python3 device/scripts/fetch-sheng-dts.py
+          ./unixnu build firmware --uefi "$UNIXNU_UEFI"
+          ./unixnu bootimg --uefi "$UNIXNU_UEFI" --dtb build/sheng/sheng.dtb
+          ls -l out/*/boot/
+
       - name: Summarise the build result
         if: always()
         run: |
@@ -309,6 +317,7 @@ jobs:
           path: |
             out/*/kernel/**
             out/*/payload/**
+            out/*/boot/**
             out/*/logs/**
             out/*/tree/build/*/compile.log
           if-no-files-found: warn
