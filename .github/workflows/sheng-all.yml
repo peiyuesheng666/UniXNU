@@ -99,6 +99,8 @@ jobs:
         with:
           repository: UniXNU/uefi-sheng
           path: uefi-sheng
+          # Binaries/ is a submodule and the platform dsc pulls modules from it
+          submodules: recursive
           token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
 
       - uses: actions/setup-python@v5
