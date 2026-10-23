@@ -162,8 +162,9 @@ jobs:
           test -n "$vol" || { echo "could not read the APFS volume UUID" >&2; exit 1; }
           mkdir -p "$mnt/mobile/Library/Preferences"
           sync
-          hdiutil detach "$dev" >/dev/null
           sudo dd if="$dev" of=build/seed.raw bs=1m status=none
+          hdiutil detach "$dev" >/dev/null
+          ls -l build/seed.raw
           python3 drivers/DarwinBoot/Test/packed_ramdisk.py build/seed.raw build/seed.dbr
           python3 scripts/seed-data-skip-setup.py build/seed.dbr build/seed-skip.dbr
           python3 - "$vol" <<'PY'
