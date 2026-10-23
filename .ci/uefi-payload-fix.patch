@@ -1,0 +1,144 @@
+diff --git a/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c b/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
+index c17059f..856b9b5 100644
+--- a/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
++++ b/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
+@@ -38,6 +38,83 @@ typedef struct {
+   UINT64  End;       // exclusive
+ } RANGE;
+ 
++STATIC
++VOID
++DiagPrint (
++  IN CONST CHAR8  *Text
++  )
++{
++  CHAR16  Buffer[192];
++  UINTN   Index;
++
++  if ((gST == NULL) || (gST->ConOut == NULL)) {
++    return;
++  }
++  for (Index = 0; (Index < 180) && (Text[Index] != '\0'); Index++) {
++    Buffer[Index] = (CHAR16)Text[Index];
++  }
++  Buffer[Index] = L'\0';
++  gST->ConOut->OutputString (gST->ConOut, Buffer);
++  gST->ConOut->OutputString (gST->ConOut, L"\r\n");
++}
++
++STATIC
++VOID
++DiagHex (
++  IN CONST CHAR8  *Label,
++  IN UINT64       Value
++  )
++{
++  CHAR8  Text[72];
++  UINTN  Pos = 0;
++  UINTN  Shift;
++
++  while ((Label[Pos] != '\0') && (Pos < 40)) {
++    Text[Pos] = Label[Pos];
++    Pos++;
++  }
++  Text[Pos++] = '0';
++  Text[Pos++] = 'x';
++  for (Shift = 60; ; Shift -= 4) {
++    UINTN  Digit = (UINTN)((Value >> Shift) & 0xF);
++    Text[Pos++] = (CHAR8)(Digit < 10 ? '0' + Digit : 'a' + Digit - 10);
++    if (Shift == 0) {
++      break;
++    }
++  }
++  Text[Pos] = '\0';
++  DiagPrint (Text);
++}
++
++STATIC
++UINT64
++FatVolumeBytes (
++  IN UINT64  Start
++  )
++{
++  UINT8   *Base = (UINT8 *)(UINTN)Start;
++  UINT16  BytesPerSector;
++  UINT32  TotalSectors;
++
++  BytesPerSector = ReadUnaligned16 ((CONST UINT16 *)(Base + 11));
++  if ((BytesPerSector != 512) && (BytesPerSector != 1024) &&
++      (BytesPerSector != 2048) && (BytesPerSector != 4096))
++  {
++    return 0;
++  }
++
++  TotalSectors = ReadUnaligned16 ((CONST UINT16 *)(Base + 19));
++  if (TotalSectors == 0) {
++    TotalSectors = ReadUnaligned32 ((CONST UINT32 *)(Base + 32));
++  }
++  if (TotalSectors == 0) {
++    return 0;
++  }
++
++  return (UINT64)TotalSectors * (UINT64)BytesPerSector;
++}
++
++
+ STATIC
+ UINT64
+ ReadCells (
+@@ -392,6 +469,7 @@ PublishInitrd (
+   UINT64      End;
+   EFI_HANDLE  Handle;
+ 
++  DiagPrint ("SHENGMEM: publish initrd");
+   Chosen = FdtPathOffset (Fdt, "/chosen");
+   if (Chosen < 0) {
+     DEBUG ((DEBUG_ERROR, "SHENGMEM: no /chosen\n"));
+@@ -409,10 +487,45 @@ PublishInitrd (
+ 
+   Start = ReadCells (StartProp, StartLength / 4);
+   End   = ReadCells (EndProp, EndLength / 4);
+-  if ((End <= Start) || (((End - Start) % RAM_BLOCK_SIZE) != 0)) {
+-    DEBUG ((DEBUG_ERROR, "SHENGMEM: initrd 0x%lx-0x%lx is not a whole number of sectors\n", Start, End));
++  if (End <= Start) {
++    DEBUG ((DEBUG_ERROR, "SHENGMEM: initrd 0x%lx-0x%lx is empty\n", Start, End));
++    DiagPrint ("SHENGMEM: initrd empty");
+     return;
+   }
++  if (((End - Start) % RAM_BLOCK_SIZE) != 0) {
++    DEBUG ((
++      DEBUG_ERROR,
++      "SHENGMEM: initrd 0x%lx-0x%lx is not a whole number of sectors, rounding down\n",
++      Start,
++      End
++      ));
++    End = Start + (((End - Start) / RAM_BLOCK_SIZE) * RAM_BLOCK_SIZE);
++  }
++
++  {
++    EFI_STATUS  MapStatus;
++
++    // Map the carveout through the CPU architectural protocol before touching it:
++    // CpuDxe owns the page-table pool, ArmSetMemoryAttributes does not create entries.
++    MapStatus = gDS->AddMemorySpace (
++                      EfiGcdMemoryTypeSystemMemory,
++                      Start,
++                      End - Start,
++                      0xF
++                      );
++    DiagHex ("SHENGMEM: add space ", MapStatus);
++    MapStatus = gDS->SetMemorySpaceAttributes (Start, End - Start, EFI_MEMORY_WB);
++    DiagHex ("SHENGMEM: set attrs ", MapStatus);
++  }
++
++  {
++    UINT64  FatBytes = FatVolumeBytes (Start);
++    DiagHex ("SHENGMEM: fat bytes ", FatBytes);
++    if ((FatBytes != 0) && (FatBytes <= (End - Start))) {
++      End = Start + FatBytes;
++      DiagPrint ("SHENGMEM: sized from the FAT BPB");
++    }
++  }
+ 
+   mRamBase                = (UINT8 *)(UINTN)Start;
+   mMedia.MediaId          = 1;
