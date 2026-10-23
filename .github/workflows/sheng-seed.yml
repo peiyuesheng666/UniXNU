@@ -406,6 +406,8 @@ jobs:
               ls -l "$dtb" "$r" 2>&1 || true
               ls -l out/sheng/tree/uefi-sheng/Build/*/*/FV/*.fd 2>&1 || true
             } > bootimg-error.txt
+            mkdir -p out/sheng/logs
+            cp -f bootimg-error.txt out/sheng/logs/bootimg-diag.log
             exit $rc
           fi
           ls -l out/sheng/boot/
@@ -437,6 +439,15 @@ jobs:
             out/*/tree/build/*/compile.log
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Upload the bootimg error
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootimg-error
+          path: bootimg-error.txt
+          if-no-files-found: ignore
+          retention-days: 3
 
       - name: Upload boot image and firmware
         if: always()
