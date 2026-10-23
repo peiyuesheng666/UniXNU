@@ -248,23 +248,27 @@ jobs:
       - name: Prepare the payload configuration
         run: |
           set -eu
-          if [ -f "$RUNNER_TEMP/data.dbr" ]; then
-            echo 'a Data seed is present: the install entry stays'
-            exit 0
-          fi
-          # [payload.install] is the Data reset entry, and it needs a Data seed. Without a
-          # seed the volume is still buildable, so drop the entry instead of failing.
           python3 - <<'PY'
-          import re
+          import os, re
           from pathlib import Path
           board = Path('device/board.toml')
           text = board.read_text()
-          stripped = re.sub(r'(?ms)^\[payload\.install\].*?(?=^\[)', '', text)
-          if stripped != text:
-              board.write_text(stripped)
-              print('no Data seed: removed [payload.install]')
+
+          # The boot image must stay under the bootloader limit, and the payload contents are
+          # about 52 MB, so the 192 MiB default only pads the image.
+          size = os.environ.get('PAYLOAD_SIZE_MIB', '64')
+          text, changed = re.subn(r'(?m)^(\s*size_mib\s*=\s*)\d+',
+                                  lambda m: m.group(1) + size, text, count=1)
+          print(f'payload volume: {size} MiB' if changed else 'payload volume: unchanged')
+
+          if os.path.exists(os.environ.get('RUNNER_TEMP', '/tmp') + '/data.dbr'):
+              print('a Data seed is present: the install entry stays')
           else:
-              print('[payload.install] already absent')
+              stripped = re.sub(r'(?ms)^\[payload\.install\].*?(?=^\[)', '', text)
+              if stripped != text:
+                  text = stripped
+                  print('no Data seed: removed [payload.install]')
+          board.write_text(text)
           PY
 
       - name: Build payload
@@ -290,9 +294,10 @@ jobs:
       - name: Build the firmware volume and the boot image
         run: |
           set -eu
-          python3 device/scripts/fetch-sheng-dts.py
+          # the firmware preflight runs inside the tree and reads build/sheng/sheng.dtb
+          ( cd out/sheng/tree && python3 "$GITHUB_WORKSPACE/device/scripts/fetch-sheng-dts.py" )
           ./unixnu build firmware --uefi "$UNIXNU_UEFI"
-          ./unixnu bootimg --uefi "$UNIXNU_UEFI" --dtb build/sheng/sheng.dtb
+          ./unixnu bootimg --uefi "$UNIXNU_UEFI" --dtb out/sheng/tree/build/sheng/sheng.dtb
           ls -l out/*/boot/
 
       - name: Summarise the build result
