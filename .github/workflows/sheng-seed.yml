@@ -130,17 +130,14 @@ jobs:
           done
 
       - name: Create a skipped-Setup Data seed
-        # No base seed is published: build an empty APFS Data volume, give it the /mobile
-        # skeleton, pack it as DBRDISK1, then let the board tool merge the Setup-done
-        # preferences. Its volume UUID is pinned into the defconfigs so XNU finds it.
         run: |
           set -eu
           git submodule update --init --depth 1 drivers/DarwinBoot
           mkdir -p build
-          hdiutil create -size 8g -fs APFS -volname Data -layout NONE -o build/seed.raw >/dev/null
+          rm -f build/seed.dmg build/seed.raw build/seed.dbr build/seed-skip.dbr
+          hdiutil create -size 8g -fs APFS -volname Data -layout NONE -o build/seed.dmg >/dev/null
           mnt="$RUNNER_TEMP/seedmnt"; rm -rf "$mnt"; mkdir -p "$mnt"
-          hdiutil attach -imagekey diskimage-class=CRawDiskImage -nobrowse -owners off \
-            -mountpoint "$mnt" -plist build/seed.raw > "$RUNNER_TEMP/att.plist"
+          hdiutil attach -nobrowse -owners off -mountpoint "$mnt" -plist build/seed.dmg > "$RUNNER_TEMP/att.plist"
           dev=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/att.plist'));print(d['system-entities'][0]['dev-entry'])")
           diskutil info -plist "$dev" > "$RUNNER_TEMP/vol.plist" || true
           vol=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/vol.plist'));print(d.get('APFSVolumeUUID') or d.get('VolumeUUID') or '')")
@@ -148,6 +145,7 @@ jobs:
           mkdir -p "$mnt/mobile/Library/Preferences"
           sync
           hdiutil detach "$dev" >/dev/null
+          sudo dd if="$dev" of=build/seed.raw bs=1m status=none
           python3 drivers/DarwinBoot/Test/packed_ramdisk.py build/seed.raw build/seed.dbr
           python3 scripts/seed-data-skip-setup.py build/seed.dbr build/seed-skip.dbr
           python3 - "$vol" <<'PY'
@@ -158,11 +156,11 @@ jobs:
               p = Path('.ci') / name
               if not p.is_file():
                   continue
-              t = p.read_text()
-              t2 = re.sub(r'CONFIG_XNU_OWNER_DATA_VOLUME_UUID=.*',
-                          f'CONFIG_XNU_OWNER_DATA_VOLUME_UUID="{vol}"', t)
-              if t2 != t:
-                  p.write_text(t2)
+              text = p.read_text()
+              new = re.sub(r'CONFIG_XNU_OWNER_DATA_VOLUME_UUID=.*',
+                           f'CONFIG_XNU_OWNER_DATA_VOLUME_UUID="{vol}"', text)
+              if new != text:
+                  p.write_text(new)
                   print('pinned', name, '->', vol)
           PY
           ls -l build/seed-skip.dbr
@@ -338,6 +336,15 @@ jobs:
           if [ -n "$UNIQUE_CHIP_ID" ]; then args+=(--unique-chip-id "$UNIQUE_CHIP_ID"); fi
           if [ "$SKIP_SETUP" = "true" ]; then args+=(--skip-setup); fi
           ./unixnu build payload "${args[@]}"
+
+      - name: Place the device tree in the build tree
+        # check-sheng.py (firmware preflight) and bootimg both read build/sheng/sheng.dtb
+        # relative to the assembled tree.
+        run: |
+          set -eu
+          mkdir -p out/sheng/tree/build/sheng
+          cp -f "$GITHUB_WORKSPACE/sheng/sheng.dtb" out/sheng/tree/build/sheng/sheng.dtb
+          ls -l out/sheng/tree/build/sheng/sheng.dtb
 
       - name: Build the EFI package
         run: ./unixnu build package
