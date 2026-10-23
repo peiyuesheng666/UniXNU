@@ -1,0 +1,122 @@
+diff --git a/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c b/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
+index c17059f..f491277 100644
+--- a/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
++++ b/Platforms/Xiaomi/shengPkg/Drivers/ShengBootMemoryDxe/ShengBootMemoryDxe.c
+@@ -38,6 +38,81 @@ typedef struct {
+   UINT64  End;       // exclusive
+ } RANGE;
+ 
++STATIC
++VOID
++DiagPrint (
++  IN CONST CHAR8  *Text
++  )
++{
++  CHAR16  Buffer[192];
++  UINTN   Index;
++
++  if ((gST == NULL) || (gST->ConOut == NULL)) {
++    return;
++  }
++  for (Index = 0; (Index < 180) && (Text[Index] != '\0'); Index++) {
++    Buffer[Index] = (CHAR16)Text[Index];
++  }
++  Buffer[Index] = L'\0';
++  gST->ConOut->OutputString (gST->ConOut, Buffer);
++  gST->ConOut->OutputString (gST->ConOut, L"\r\n");
++}
++
++STATIC
++VOID
++DiagHex (
++  IN CONST CHAR8  *Label,
++  IN UINT64       Value
++  )
++{
++  CHAR8  Text[72];
++  UINTN  Pos = 0;
++  UINTN  Shift;
++
++  while ((Label[Pos] != '\0') && (Pos < 40)) {
++    Text[Pos] = Label[Pos];
++    Pos++;
++  }
++  Text[Pos++] = '0';
++  Text[Pos++] = 'x';
++  for (Shift = 60; ; Shift -= 4) {
++    UINTN  Digit = (UINTN)((Value >> Shift) & 0xF);
++    Text[Pos++] = (CHAR8)(Digit < 10 ? '0' + Digit : 'a' + Digit - 10);
++    if (Shift == 0) {
++      break;
++    }
++  }
++  Text[Pos] = '\0';
++  DiagPrint (Text);
++}
++
++STATIC
++VOID
++DiagProbe (
++  IN UINT64  Address
++  )
++{
++  UINT8        *Probe = (UINT8 *)(UINTN)Address;
++  CHAR8        Text[72];
++  CONST CHAR8  *Label = "SHENGMEM: mem ";
++  UINTN        Pos = 0;
++  UINTN        Index;
++
++  while ((Label[Pos] != '\0') && (Pos < 20)) {
++    Text[Pos] = Label[Pos];
++    Pos++;
++  }
++  for (Index = 0; Index < 8; Index++) {
++    UINTN  Hi = (Probe[Index] >> 4) & 0xF;
++    UINTN  Lo = Probe[Index] & 0xF;
++    Text[Pos++] = (CHAR8)(Hi < 10 ? '0' + Hi : 'a' + Hi - 10);
++    Text[Pos++] = (CHAR8)(Lo < 10 ? '0' + Lo : 'a' + Lo - 10);
++  }
++  Text[Pos] = '\0';
++  DiagPrint (Text);
++}
++
++
+ STATIC
+ UINT64
+ ReadCells (
+@@ -392,9 +467,12 @@ PublishInitrd (
+   UINT64      End;
+   EFI_HANDLE  Handle;
+ 
++  DiagPrint ("SHENGMEM: publish initrd");
++  DiagProbe (0x1000000);
+   Chosen = FdtPathOffset (Fdt, "/chosen");
+   if (Chosen < 0) {
+     DEBUG ((DEBUG_ERROR, "SHENGMEM: no /chosen\n"));
++    DiagPrint ("SHENGMEM: no /chosen");
+     return;
+   }
+ 
+@@ -404,11 +482,14 @@ PublishInitrd (
+       ((StartLength != 4) && (StartLength != 8)) || ((EndLength != 4) && (EndLength != 8)))
+   {
+     DEBUG ((DEBUG_ERROR, "SHENGMEM: no initrd in /chosen\n"));
++    DiagPrint ("SHENGMEM: no initrd in /chosen");
+     return;
+   }
+ 
+   Start = ReadCells (StartProp, StartLength / 4);
++  DiagHex ("SHENGMEM: start ", Start);
+   End   = ReadCells (EndProp, EndLength / 4);
++  DiagHex ("SHENGMEM: end   ", End);
+   if ((End <= Start) || (((End - Start) % RAM_BLOCK_SIZE) != 0)) {
+     DEBUG ((DEBUG_ERROR, "SHENGMEM: initrd 0x%lx-0x%lx is not a whole number of sectors\n", Start, End));
+     return;
+@@ -435,6 +516,7 @@ PublishInitrd (
+                   NULL
+                   );
+   DEBUG ((DEBUG_ERROR, "SHENGMEM: initrd block device 0x%lx size 0x%lx %r\n", Start, End - Start, Status));
++  DiagHex ("SHENGMEM: block dev status ", Status);
+ }
+ 
+ EFI_STATUS
