@@ -259,7 +259,7 @@ jobs:
           event = Path(os.environ['GITHUB_EVENT_PATH']).read_text()
           import json
           inputs = json.loads(event).get('inputs', {})
-          secrets = [os.environ.get('UNIXNU_UNIQUE_CHIP_ID', ''), inputs.get('trust_cache_url', ''), inputs.get('data_seed_url', '')]
+          secrets = [os.environ.get('UNIXNU_UNIQUE_CHIP_ID', '0x1122334455667788'), inputs.get('trust_cache_url', ''), inputs.get('data_seed_url', '')]
           secrets = [value for value in secrets if value]
           count = 0
           for path in sorted(source.glob('*.log')) if source.is_dir() else []:
