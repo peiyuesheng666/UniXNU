@@ -244,6 +244,28 @@ jobs:
           if [ -n "$IPSW_URL" ]; then args+=(--ipsw "$IPSW_URL"); fi
           ./unixnu build userdata "${args[@]}"
 
+      - name: Prepare the payload configuration
+        run: |
+          set -eu
+          if [ -f "$RUNNER_TEMP/data.dbr" ]; then
+            echo 'a Data seed is present: the install entry stays'
+            exit 0
+          fi
+          # [payload.install] is the Data reset entry, and it needs a Data seed. Without a
+          # seed the volume is still buildable, so drop the entry instead of failing.
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          board = Path('device/board.toml')
+          text = board.read_text()
+          stripped = re.sub(r'(?ms)^\[payload\.install\].*?(?=^\[)', '', text)
+          if stripped != text:
+              board.write_text(stripped)
+              print('no Data seed: removed [payload.install]')
+          else:
+              print('[payload.install] already absent')
+          PY
+
       - name: Build payload
         if: contains(inputs.steps || 'kernel', 'payload')
         env:
