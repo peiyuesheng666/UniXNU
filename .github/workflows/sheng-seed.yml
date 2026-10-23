@@ -139,8 +139,25 @@ jobs:
           mnt="$RUNNER_TEMP/seedmnt"; rm -rf "$mnt"; mkdir -p "$mnt"
           hdiutil attach -nobrowse -owners off -mountpoint "$mnt" -plist build/seed.dmg > "$RUNNER_TEMP/att.plist"
           dev=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/att.plist','rb'));print(d['system-entities'][0]['dev-entry'])")
-          diskutil info -plist "$dev" > "$RUNNER_TEMP/vol.plist" || true
-          vol=$(python3 -c "import plistlib;d=plistlib.load(open('$RUNNER_TEMP/vol.plist','rb'));print(d.get('APFSVolumeUUID') or d.get('VolumeUUID') or '')")
+          diskutil info -plist "$mnt" > "$RUNNER_TEMP/vol.plist" || diskutil info -plist "$dev" > "$RUNNER_TEMP/vol.plist" || true
+          vol=$(python3 - "$RUNNER_TEMP/vol.plist" "$RUNNER_TEMP/att.plist" <<'PY'
+          import plistlib, sys
+          def first_uuid(path):
+              try:
+                  d = plistlib.load(open(path, 'rb'))
+              except Exception:
+                  return ''
+              for key in ('APFSVolumeUUID', 'VolumeUUID'):
+                  if d.get(key):
+                      return d[key]
+              for entity in d.get('system-entities', []):
+                  for key in ('volume-uuid', 'APFSVolumeUUID', 'VolumeUUID'):
+                      if entity.get(key):
+                          return entity[key]
+              return ''
+          print(first_uuid(sys.argv[1]) or first_uuid(sys.argv[2]))
+          PY
+          )
           echo "seed volume uuid: $vol"
           test -n "$vol" || { echo "could not read the APFS volume UUID" >&2; exit 1; }
           mkdir -p "$mnt/mobile/Library/Preferences"
