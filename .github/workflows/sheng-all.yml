@@ -76,6 +76,8 @@ concurrency:
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
+  # patch-xnu-entry-probe.py reads Font.h from the Mu-Silicium checkout
+  UNIXNU_UEFI: ${{ github.workspace }}/uefi-sheng
 
 jobs:
   build:
@@ -89,6 +91,13 @@ jobs:
           repository: ${{ inputs.device_repository || 'UniXNU/UniXNU-sheng' }}
           ref: ${{ inputs.device_ref || 'main' }}
           path: device
+          token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
+
+      - name: Check out the UEFI port
+        uses: actions/checkout@v4
+        with:
+          repository: UniXNU/uefi-sheng
+          path: uefi-sheng
           token: ${{ secrets.UNIXNU_DEVICE_TOKEN || github.token }}
 
       - uses: actions/setup-python@v5
