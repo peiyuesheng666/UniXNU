@@ -371,7 +371,11 @@ jobs:
         run: ./unixnu build package
 
       - name: Build the UEFI firmware volume
-        run: ./unixnu build firmware --uefi "$GITHUB_WORKSPACE/uefi-sheng"
+        run: |
+          set -eu
+          git -C "$GITHUB_WORKSPACE/uefi-sheng" submodule update --init --depth 1 Binaries
+          ls "$GITHUB_WORKSPACE/uefi-sheng/Binaries" | head
+          ./unixnu build firmware --uefi "$GITHUB_WORKSPACE/uefi-sheng"
 
       - name: Build the Android boot image
         run: |
