@@ -34,6 +34,7 @@ UniXNU 通过 UEFI 在 ARM64 设备上运行 iOS 或 macOS。架构见[欢迎页
 核对资源、平台操作和组件依赖，再将源码版本固定到设备配置。
 新 OS profile 需要先完成 [XNU 与补丁输入](/zh/xnu/source-and-patches)以及
 [预链接 ABI 工作](/zh/concepts/prelink)，再验证硬件驱动。
+iOS 或 iPadOS 27 等 arm64e 系统仅适用于受支持的设备，见 [arm64e OS 配置](/zh/porting/arm64e)。
 
 **结果：** 已选仓库及精确版本，以及待完成的硬件或 ABI 工作记录。
 
@@ -114,6 +115,7 @@ Wi-Fi，再处理 DSP、音频和电源。每篇指南列出源码位置、板�
 [本地构建配置](/zh/reference/configuration#local-build-inputs)。
 按[构建指南](/zh/building)依次生成内核、package、固件、payload、所需 userdata 和启动镜像，
 确认当前输出后继续。
+使用独立 UniXNU 分区时，先按[分区步骤](/zh/porting/dual-system-partition)准备目标分区，再安装镜像。
 
 按[启动验证顺序](/zh/porting/bring-up)检查固件、菜单、加载器、内核和根卷。
 设备命令见[启动与恢复](/zh/guide/boot)。修改启动参数后，按
